@@ -45,6 +45,7 @@ export class Entry {
       bus: this.bus,
       config: this.config,
       time: this.time,
+      save: this.save,
     });
 
     // Resize handling
