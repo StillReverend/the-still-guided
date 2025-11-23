@@ -4,6 +4,7 @@ import { EventBus } from "../core/EventBus";
 import { createDefaultConfig } from "../core/Config";
 import type { Config } from "../core/Config";
 import { Time } from "../core/Time";
+import { SaveManager } from "../core/SaveManager";
 
 export class Entry {
   public readonly renderer: THREE.WebGLRenderer;
@@ -11,6 +12,7 @@ export class Entry {
   public readonly config: Config;
   public readonly time: Time;
   public readonly sceneManager: SceneManager;
+  public readonly save: SaveManager;
 
   private rafId: number | null = null;
   private isRunning = false;
@@ -34,6 +36,8 @@ export class Entry {
     this.bus = new EventBus();
     this.config = createDefaultConfig();
     this.time = new Time();
+    this.save = new SaveManager();
+    this.save.enableAutosave();
 
     // Scene manager orchestrates scenes + systems
     this.sceneManager = new SceneManager({
