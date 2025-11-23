@@ -1,3 +1,16 @@
+// ============================================================
+// THE STILL — Phase 4: Mobile / Touch Controls
+// REPLACES Phase 3 CameraSystem.ts entirely.
+// ------------------------------------------------------------
+// Supports:
+//  - Mouse orbit (click-drag)
+//  - One-finger orbit (touch)
+//  - Two-finger pan (touch)
+//  - Pinch zoom (touch) with snap to AT/NEAR/FAR on release
+//  - Trackpad wheel debounce (no flicker)
+//  - Idle auto-rotate pauses while any pointer active
+// ============================================================
+
 import * as THREE from "three";
 import type { EventBus } from "../core/EventBus";
 import type { Config, DistanceMode } from "../core/Config";
@@ -10,6 +23,12 @@ export interface CameraSystemDeps {
   config: Config;
   save: SaveManager;
 }
+
+type PointerRec = {
+  id: number;
+  pos: THREE.Vector2;
+  prev: THREE.Vector2;
+};
 
 export class CameraSystem {
   public enabled = true;
@@ -26,21 +45,35 @@ export class CameraSystem {
 
   private distanceMode: DistanceMode;
 
+  // Mouse state
   private isDragging = false;
   private activePointerId: number | null = null;
   private lastPointer = new THREE.Vector2();
 
+  // Touch / multi-pointer state
+  private pointers: Map<number, PointerRec> = new Map();
+  private lastPinchDist = 0;
+  private lastTwoFingerCenter = new THREE.Vector2();
+
+  // Pinch radius override while pinching
+  private radiusOverride: number | null = null;
+
+  // Auto-rotate
   private idleMs = 0;
   private readonly autoRotateDelayMs: number;
   private readonly autoRotateSpeed = 0.12; // rad/sec
 
-  private readonly rotateSpeed = 0.005; // per pixel
+  // Tuning
+  private readonly mouseRotateSpeed = 0.005;
+  private readonly touchRotateSpeed = 0.0031;
   private readonly damping = 0.08;
+  private readonly panSpeed = 0.0025;       // world units per pixel baseline
+  private readonly pinchZoomSpeed = 0.007;  // radius per pinch pixel
 
-  // Trackpad / wheel debounce so two-finger scroll doesn't spam distance changes
+  // Wheel/trackpad debounce
   private lastWheelAt = 0;
   private readonly wheelCooldownMs = 250;
-  private readonly wheelThreshold = 4; // ignore tiny deltas
+  private readonly wheelThreshold = 4;
 
   constructor({ camera, domElement, bus, config, save }: CameraSystemDeps) {
     this.camera = camera;
@@ -65,7 +98,7 @@ export class CameraSystem {
   }
 
   public init(): void {
-    // no-op for now
+    // no-op
   }
 
   public update(dt: number): void {
@@ -75,7 +108,7 @@ export class CameraSystem {
     this.spherical.theta += this.sphericalDelta.theta;
     this.spherical.phi += this.sphericalDelta.phi;
 
-    // Clamp phi to avoid flipping at poles
+    // Clamp phi away from poles
     const EPS = 1e-4;
     this.spherical.phi = THREE.MathUtils.clamp(
       this.spherical.phi,
@@ -83,25 +116,28 @@ export class CameraSystem {
       Math.PI - EPS
     );
 
-    // Smoothly damp deltas to zero
+    // Dampen deltas
     this.sphericalDelta.theta *= 1 - this.damping;
     this.sphericalDelta.phi *= 1 - this.damping;
 
-    // Idle auto-rotate
-    if (!this.isDragging) {
+    // Auto-rotate only if idle AND no pointers active
+    const hasPointers = this.pointers.size > 0;
+    if (!this.isDragging && !hasPointers) {
       this.idleMs += dt * 1000;
       if (this.idleMs > this.autoRotateDelayMs) {
         this.spherical.theta += this.autoRotateSpeed * dt;
       }
     }
 
-    // Enforce distance mode radius each frame
-    this.spherical.radius = this.config.camera.distanceModes[this.distanceMode];
+    // Radius from mode unless pinching
+    const baseRadius = this.config.camera.distanceModes[this.distanceMode];
+    this.spherical.radius = this.radiusOverride ?? baseRadius;
 
-    // Convert to cartesian and apply
+    // Apply to camera
     const newPos = new THREE.Vector3()
       .setFromSpherical(this.spherical)
       .add(this.target);
+
     this.camera.position.copy(newPos);
     this.camera.lookAt(this.target);
 
@@ -109,7 +145,7 @@ export class CameraSystem {
   }
 
   public onResize(): void {
-    // no-op; StillnessScene updates projection
+    // no-op; projection handled in scene
   }
 
   public setTarget(v: THREE.Vector3): void {
@@ -122,6 +158,7 @@ export class CameraSystem {
 
   public cycleDistance(next?: DistanceMode): void {
     const modes: DistanceMode[] = ["AT", "NEAR", "FAR"];
+
     if (next) {
       this.distanceMode = next;
     } else {
@@ -129,11 +166,14 @@ export class CameraSystem {
       this.distanceMode = modes[(i + 1) % modes.length];
     }
 
+    this.radiusOverride = null;
     this.idleMs = 0;
+
     this.save.update((s) => {
       s.camera.distanceMode = this.distanceMode;
     });
     this.save.save();
+
     this.bus.emit("camera:distanceMode", this.distanceMode);
   }
 
@@ -142,18 +182,18 @@ export class CameraSystem {
   }
 
   // --------------------------------------------------------
-  // Input Binding (mouse only for Phase 3)
-  // Touch will come in Phase 4.
+  // Input binding
   // --------------------------------------------------------
 
   private bindEvents(): void {
+    this.domElement.style.touchAction = "none";
+
     this.domElement.addEventListener("pointerdown", this.onPointerDown);
     window.addEventListener("pointermove", this.onPointerMove);
     window.addEventListener("pointerup", this.onPointerUp);
     window.addEventListener("pointercancel", this.onPointerCancel);
     window.addEventListener("blur", this.onWindowBlur);
     this.domElement.addEventListener("contextmenu", this.onContextMenu);
-
     this.domElement.addEventListener("wheel", this.onWheel, { passive: false });
     this.domElement.addEventListener("dblclick", this.onDoubleClick);
   }
@@ -165,65 +205,168 @@ export class CameraSystem {
     window.removeEventListener("pointercancel", this.onPointerCancel);
     window.removeEventListener("blur", this.onWindowBlur);
     this.domElement.removeEventListener("contextmenu", this.onContextMenu);
-
     this.domElement.removeEventListener("wheel", this.onWheel);
     this.domElement.removeEventListener("dblclick", this.onDoubleClick);
   }
 
+  // --------------------------------------------------------
+  // Pointer handlers
+  // --------------------------------------------------------
+
   private onPointerDown = (e: PointerEvent): void => {
     if (!this.enabled) return;
 
-    // Only react to primary left-button drags
-    if (!e.isPrimary || e.button !== 0) return;
+    const pr: PointerRec = {
+      id: e.pointerId,
+      pos: new THREE.Vector2(e.clientX, e.clientY),
+      prev: new THREE.Vector2(e.clientX, e.clientY),
+    };
+    this.pointers.set(e.pointerId, pr);
 
-    this.isDragging = true;
-    this.activePointerId = e.pointerId;
-    this.lastPointer.set(e.clientX, e.clientY);
+    // Mouse orbit
+    if (e.pointerType === "mouse") {
+      if (!e.isPrimary || e.button !== 0) return;
+      this.isDragging = true;
+      this.activePointerId = e.pointerId;
+      this.lastPointer.set(e.clientX, e.clientY);
+    }
+
     this.idleMs = 0;
 
     try {
       this.domElement.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore capture failures
+    } catch {}
+
+    // Initialize pinch/pan state when second touch arrives
+    if (this.pointers.size === 2) {
+      const [a, b] = this.getTwoPointers();
+      this.lastPinchDist = a.pos.distanceTo(b.pos);
+      this.lastTwoFingerCenter
+        .copy(a.pos)
+        .add(b.pos)
+        .multiplyScalar(0.5);
+      this.radiusOverride = this.spherical.radius;
     }
   };
 
   private onPointerMove = (e: PointerEvent): void => {
-    if (!this.enabled || !this.isDragging) return;
-    if (this.activePointerId !== e.pointerId) return;
+    if (!this.enabled) return;
 
-    const dx = e.clientX - this.lastPointer.x;
-    const dy = e.clientY - this.lastPointer.y;
-    this.lastPointer.set(e.clientX, e.clientY);
+    const pr = this.pointers.get(e.pointerId);
+    if (!pr) return;
 
-    this.sphericalDelta.theta -= dx * this.rotateSpeed;
-    this.sphericalDelta.phi -= dy * this.rotateSpeed;
-    this.idleMs = 0;
+    pr.prev.copy(pr.pos);
+    pr.pos.set(e.clientX, e.clientY);
+
+    // Mouse orbit
+    if (
+      e.pointerType === "mouse" &&
+      this.isDragging &&
+      this.activePointerId === e.pointerId
+    ) {
+      const dx = pr.pos.x - this.lastPointer.x;
+      const dy = pr.pos.y - this.lastPointer.y;
+      this.lastPointer.copy(pr.pos);
+
+      this.sphericalDelta.theta -= dx * this.mouseRotateSpeed;
+      this.sphericalDelta.phi   -= dy * this.mouseRotateSpeed;
+      this.idleMs = 0;
+      return;
+    }
+
+    // Touch only from here
+    if (e.pointerType !== "touch") return;
+
+    // One-finger orbit
+    if (this.pointers.size === 1) {
+      const dx = pr.pos.x - pr.prev.x;
+      const dy = pr.pos.y - pr.prev.y;
+
+      this.sphericalDelta.theta -= dx * this.touchRotateSpeed;
+      this.sphericalDelta.phi   -= dy * this.touchRotateSpeed;
+      this.idleMs = 0;
+      return;
+    }
+
+    // Two-finger pan + pinch
+    if (this.pointers.size === 2) {
+      const [a, b] = this.getTwoPointers();
+
+      // Pan by center movement
+      const center = new THREE.Vector2()
+        .copy(a.pos)
+        .add(b.pos)
+        .multiplyScalar(0.5);
+
+      const dCenter = new THREE.Vector2().subVectors(
+        center,
+        this.lastTwoFingerCenter
+      );
+      this.lastTwoFingerCenter.copy(center);
+      this.applyPan(dCenter);
+
+      // Pinch zoom by distance delta
+      const dist = a.pos.distanceTo(b.pos);
+      const dd = dist - this.lastPinchDist;
+      this.lastPinchDist = dist;
+
+      if (this.radiusOverride == null) {
+        this.radiusOverride = this.spherical.radius;
+      }
+      this.radiusOverride = Math.max(
+        0.5,
+        this.radiusOverride - dd * this.pinchZoomSpeed
+      );
+
+      this.idleMs = 0;
+    }
   };
 
   private onPointerUp = (e: PointerEvent): void => {
-    if (this.activePointerId !== e.pointerId) return;
-    this.isDragging = false;
-    this.activePointerId = null;
+    this.pointers.delete(e.pointerId);
+
+    if (this.activePointerId === e.pointerId) {
+      this.isDragging = false;
+      this.activePointerId = null;
+    }
 
     try {
       this.domElement.releasePointerCapture(e.pointerId);
     } catch {}
+
+    // When all touches end, snap to nearest mode
+    if (this.pointers.size === 0 && this.radiusOverride != null) {
+      this.snapRadiusToMode(this.radiusOverride);
+      this.radiusOverride = null;
+    }
   };
 
   private onPointerCancel = (e: PointerEvent): void => {
-    if (this.activePointerId !== e.pointerId) return;
-    this.isDragging = false;
-    this.activePointerId = null;
+    this.pointers.delete(e.pointerId);
+
+    if (this.activePointerId === e.pointerId) {
+      this.isDragging = false;
+      this.activePointerId = null;
+    }
+
+    if (this.pointers.size === 0 && this.radiusOverride != null) {
+      this.snapRadiusToMode(this.radiusOverride);
+      this.radiusOverride = null;
+    }
   };
 
   private onWindowBlur = (): void => {
     this.isDragging = false;
     this.activePointerId = null;
+    this.pointers.clear();
+
+    if (this.radiusOverride != null) {
+      this.snapRadiusToMode(this.radiusOverride);
+      this.radiusOverride = null;
+    }
   };
 
   private onContextMenu = (e: MouseEvent): void => {
-    // prevent right-click from leaving us stuck in dragging
     e.preventDefault();
     this.isDragging = false;
     this.activePointerId = null;
@@ -248,6 +391,72 @@ export class CameraSystem {
   };
 
   // --------------------------------------------------------
+  // Helpers
+  // --------------------------------------------------------
+
+  private getTwoPointers(): [PointerRec, PointerRec] {
+    const it = this.pointers.values();
+    const a = it.next().value as PointerRec;
+    const b = it.next().value as PointerRec;
+    return [a, b];
+  }
+
+  private applyPan(pixelDelta: THREE.Vector2): void {
+    // Camera right vector
+    const upWorld = new THREE.Vector3(0, 1, 0);
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+
+    const right = new THREE.Vector3()
+      .copy(forward)
+      .cross(upWorld)
+      .normalize();
+
+    const camUp = new THREE.Vector3()
+      .copy(right)
+      .cross(forward)
+      .normalize();
+
+    // Scale pan by current radius vs NEAR baseline
+    const nearR = this.config.camera.distanceModes.NEAR;
+    const scale = this.panSpeed * (this.spherical.radius / nearR);
+
+    this.target
+      .add(right.multiplyScalar(-pixelDelta.x * scale))
+      .add(camUp.multiplyScalar(pixelDelta.y * scale));
+
+    this.bus.emit("camera:pan", {
+      x: this.target.x,
+      y: this.target.y,
+      z: this.target.z,
+    });
+  }
+
+  private snapRadiusToMode(radius: number): void {
+    const modes: DistanceMode[] = ["AT", "NEAR", "FAR"];
+    let best: DistanceMode = modes[0];
+    let bestD = Infinity;
+
+    for (const m of modes) {
+      const r = this.config.camera.distanceModes[m];
+      const d = Math.abs(r - radius);
+      if (d < bestD) {
+        bestD = d;
+        best = m;
+      }
+    }
+
+    this.distanceMode = best;
+
+    this.save.update((s) => {
+      s.camera.distanceMode = best;
+    });
+    this.save.save();
+
+    this.bus.emit("camera:distanceMode", best);
+  }
+
+  // --------------------------------------------------------
   // Persistence
   // --------------------------------------------------------
 
@@ -259,6 +468,5 @@ export class CameraSystem {
       s.camera.position.z = p.z;
       s.camera.distanceMode = this.distanceMode;
     });
-    // Autosave flushes on interval.
   }
 }
