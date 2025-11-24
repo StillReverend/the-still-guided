@@ -4,6 +4,7 @@ import type { Config } from "../core/Config";
 import type { Time } from "../core/Time";
 import type { SaveManager } from "../core/SaveManager";
 import { CameraSystem } from "../systems/CameraSystem";
+import { StarfieldSystem } from "../systems/StarfieldSystem";
 
 export interface StillnessSceneDeps {
   renderer: THREE.WebGLRenderer;
@@ -22,8 +23,8 @@ export class StillnessScene {
   private readonly config: Config;
   private readonly save: SaveManager;
 
-  private testStars: THREE.Points | null = null;
   private cameraSystem: CameraSystem | null = null;
+  private starfield: StarfieldSystem | null = null;
 
   constructor({ renderer, bus, config, save }: StillnessSceneDeps) {
     this.renderer = renderer;
@@ -48,9 +49,6 @@ export class StillnessScene {
   }
 
   public init(): void {
-    // Minimal placeholder starfield for Phase 1
-    this.testStars = this.createTestStars(1500);
-    this.scene.add(this.testStars);
 
     // Simple ambient light placeholder
     const light = new THREE.AmbientLight(0xffffff, 0.5);
@@ -67,14 +65,19 @@ export class StillnessScene {
     this.cameraSystem.init();
 
     this.bus.emit("scene:ready", { id: "stillness" });
+
+    this.starfield = new StarfieldSystem({
+      scene: this.scene,
+      camera: this.camera,
+      config: this.config,
+    });
+    this.starfield.init();
+
   }
 
   public update(dt: number): void {
     this.cameraSystem?.update(dt);
-
-    if (this.testStars) {
-      this.testStars.rotation.y += dt * 0.02;
-    }
+    this.starfield?.update(dt);
   }
 
   public onResize(width: number, height: number): void {
@@ -86,37 +89,9 @@ export class StillnessScene {
   public dispose(): void {
     this.cameraSystem?.dispose();
     this.cameraSystem = null;
+    this.starfield?.dispose();
+    this.starfield = null;
 
-    if (this.testStars) {
-      this.testStars.geometry.dispose();
-      (this.testStars.material as THREE.Material).dispose();
-      this.scene.remove(this.testStars);
-      this.testStars = null;
-    }
     this.bus.emit("scene:dispose", { id: "stillness" });
-  }
-
-  private createTestStars(count: number): THREE.Points {
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const i3 = i * 3;
-      positions[i3 + 0] = (Math.random() - 0.5) * 200;
-      positions[i3 + 1] = (Math.random() - 0.5) * 200;
-      positions[i3 + 2] = (Math.random() - 0.5) * 200;
-    }
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-
-    const mat = new THREE.PointsMaterial({
-      color: 0xffffed,
-      size: 0.31,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-    });
-
-    return new THREE.Points(geom, mat);
   }
 }
