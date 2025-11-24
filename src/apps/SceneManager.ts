@@ -7,11 +7,12 @@ import type { SaveManager } from "../core/SaveManager";
 
 import { StillnessScene } from "../scenes/StillnessScene";
 import { TestScene01 } from "../scenes/TestScene01";
+import { Constellation_Test } from "../scenes/constellations/Constellation_Test";
 
 import { FadeTransition } from "../transitions/FadeTransition";
 import type { Transition } from "../core/Transition";
 
-export type SceneId = "stillness" | "test01";
+export type SceneId = "stillness" | "test01" | "constellation_test";
 
 export interface SceneManagerDeps {
   renderer: THREE.WebGLRenderer;
@@ -21,7 +22,7 @@ export interface SceneManagerDeps {
   save: SaveManager;
 }
 
-type AnyScene = StillnessScene | TestScene01;
+type AnyScene = StillnessScene | TestScene01 | Constellation_Test;
 
 export class SceneManager {
   private readonly renderer: THREE.WebGLRenderer;
@@ -107,6 +108,16 @@ export class SceneManager {
   private createScene(sceneId: SceneId): AnyScene {
     if (sceneId === "stillness") {
       return new StillnessScene({
+        renderer: this.renderer,
+        bus: this.bus,
+        config: this.config,
+        time: this.time,
+        save: this.save,
+      });
+    }
+
+    if (sceneId === "constellation_test") {
+        return new Constellation_Test({
         renderer: this.renderer,
         bus: this.bus,
         config: this.config,

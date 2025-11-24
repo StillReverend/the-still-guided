@@ -48,7 +48,7 @@ export class CameraSystem {
   // Auto-rotate
   private idleMs = 0;
   private readonly autoRotateDelayMs: number;
-  private readonly autoRotateSpeed = 0.13; // rad/sec
+  private readonly autoRotateSpeed = 0.10; // rad/sec
 
   // Tuning
   private readonly mouseRotateSpeed = 0.0010;

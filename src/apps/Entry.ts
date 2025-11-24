@@ -60,7 +60,8 @@ export class Entry {
     window.addEventListener("keydown", (e) => {
       if (e.key === "1") this.sceneManager.transitionTo("stillness");
       if (e.key === "2") this.sceneManager.transitionTo("test01");
-    });
+      if (e.key === "3") this.sceneManager.transitionTo("constellation_test");
+      });
     this.loop();
   }
 
