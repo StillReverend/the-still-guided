@@ -56,6 +56,11 @@ export class Entry {
     if (this.isRunning) return;
     this.isRunning = true;
     this.sceneManager.init();
+    // Dev hotkeys for testing transitions
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "1") this.sceneManager.transitionTo("stillness");
+      if (e.key === "2") this.sceneManager.transitionTo("test01");
+    });
     this.loop();
   }
 
