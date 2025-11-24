@@ -52,7 +52,7 @@ export class CameraSystem {
   // Auto-rotate
   private idleMs = 0;
   private readonly autoRotateDelayMs: number;
-  private readonly autoRotateSpeed = 0.13; // rad/sec
+  private readonly autoRotateSpeed = 0.10; // rad/sec
 
   // Tuning (your current locked-in values)
   private readonly mouseRotateSpeed = 0.0010;
@@ -64,8 +64,8 @@ export class CameraSystem {
   private readonly pinchZoomSpeed = 0.079; // radius per pinch pixel
 
   // Dampen pan while pinch active so zoom is visible
-  private readonly pinchActiveThreshold = 0.25; // dd pixels
-  private readonly pinchPanDamping = 0.25; // 25% pan while pinching
+  private readonly pinchActiveThreshold = 0.31; // dd pixels
+  private readonly pinchPanDamping = 0.31; // 25% pan while pinching
 
   // Wheel/trackpad debounce
   private lastWheelAt = 0;
@@ -219,7 +219,6 @@ export class CameraSystem {
     window.addEventListener("blur", this.onWindowBlur);
     this.domElement.addEventListener("contextmenu", this.onContextMenu);
     this.domElement.addEventListener("wheel", this.onWheel, { passive: false });
-    this.domElement.addEventListener("dblclick", this.onDoubleClick);
   }
 
   private unbindEvents(): void {
@@ -409,11 +408,6 @@ export class CameraSystem {
     if (now - this.lastWheelAt < this.wheelCooldownMs) return;
 
     this.lastWheelAt = now;
-    this.cycleDistance();
-  };
-
-  private onDoubleClick = (): void => {
-    if (!this.enabled) return;
     this.cycleDistance();
   };
 
