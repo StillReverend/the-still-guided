@@ -15,6 +15,7 @@ type PointerRec = {
   id: number;
   pos: THREE.Vector2;
   prev: THREE.Vector2;
+  type: PointerEvent["pointerType"];
 };
 
 export class CameraSystem {
@@ -42,26 +43,29 @@ export class CameraSystem {
   private lastPinchDist = 0;
   private lastTwoFingerCenter = new THREE.Vector2();
 
-  // Pinch radius override while pinching
+  // Pinch radius override while pinching / touch zooming
   private radiusOverride: number | null = null;
+
+  // Dynamic FAR clamp (expands as constellations restore)
+  private farLimit: number;
 
   // Auto-rotate
   private idleMs = 0;
   private readonly autoRotateDelayMs: number;
-  private readonly autoRotateSpeed = 0.10; // rad/sec
+  private readonly autoRotateSpeed = 0.13; // rad/sec
 
-  // Tuning
+  // Tuning (your current locked-in values)
   private readonly mouseRotateSpeed = 0.0010;
   private readonly touchRotateSpeed = 0.00031;
-  private readonly damping = 0.079;
-  private readonly panSpeed = 0.0031;       // world units per pixel baseline
+  private readonly damping = 0.031;
+  private readonly panSpeed = 0.0031; // world units per pixel baseline
 
-  // ✅ stronger pinch for real phones
-  private readonly pinchZoomSpeed = 0.031;  // radius per pinch pixel (was 0.007)
+  // Stronger pinch for real phones
+  private readonly pinchZoomSpeed = 0.079; // radius per pinch pixel
 
-  // ✅ damp pan while pinch active so zoom is visible
+  // Dampen pan while pinch active so zoom is visible
   private readonly pinchActiveThreshold = 0.25; // dd pixels
-  private readonly pinchPanDamping = 0.25;      // 25% pan while pinching
+  private readonly pinchPanDamping = 0.25; // 25% pan while pinching
 
   // Wheel/trackpad debounce
   private lastWheelAt = 0;
@@ -87,6 +91,9 @@ export class CameraSystem {
       this.camera.position.clone().sub(this.target)
     );
 
+    // Start FAR clamp from config FAR distance
+    this.farLimit = this.config.camera.distanceModes.FAR;
+
     this.bindEvents();
   }
 
@@ -97,9 +104,11 @@ export class CameraSystem {
   public update(dt: number): void {
     if (!this.enabled) return;
 
+    // Apply deltas
     this.spherical.theta += this.sphericalDelta.theta;
     this.spherical.phi += this.sphericalDelta.phi;
 
+    // Clamp phi away from poles
     const EPS = 1e-4;
     this.spherical.phi = THREE.MathUtils.clamp(
       this.spherical.phi,
@@ -107,9 +116,11 @@ export class CameraSystem {
       Math.PI - EPS
     );
 
+    // Dampen deltas
     this.sphericalDelta.theta *= 1 - this.damping;
     this.sphericalDelta.phi *= 1 - this.damping;
 
+    // Auto-rotate only if idle AND no pointers active
     const hasPointers = this.pointers.size > 0;
     if (!this.isDragging && !hasPointers) {
       this.idleMs += dt * 1000;
@@ -118,9 +129,12 @@ export class CameraSystem {
       }
     }
 
+    // Radius from override if present, else from discrete mode
     const baseRadius = this.config.camera.distanceModes[this.distanceMode];
-    this.spherical.radius = this.radiusOverride ?? baseRadius;
+    const desiredRadius = this.radiusOverride ?? baseRadius;
+    this.spherical.radius = this.clampRadius(desiredRadius);
 
+    // Apply to camera
     const newPos = new THREE.Vector3()
       .setFromSpherical(this.spherical)
       .add(this.target);
@@ -143,6 +157,10 @@ export class CameraSystem {
     this.idleMs = 0;
   }
 
+  /**
+   * Desktop discrete cycling.
+   * Touch devices should prefer fluid pinch instead.
+   */
   public cycleDistance(next?: DistanceMode): void {
     const modes: DistanceMode[] = ["AT", "NEAR", "FAR"];
 
@@ -153,6 +171,7 @@ export class CameraSystem {
       this.distanceMode = modes[(i + 1) % modes.length];
     }
 
+    // Clear any fluid override when cycling
     this.radiusOverride = null;
     this.idleMs = 0;
 
@@ -162,6 +181,24 @@ export class CameraSystem {
     this.save.save();
 
     this.bus.emit("camera:distanceMode", this.distanceMode);
+  }
+
+  /**
+   * Expands or contracts FAR clamp dynamically.
+   * Call this when constellations restore and The Void expands.
+   */
+  public setFarLimit(newFar: number): void {
+    this.farLimit = Math.max(newFar, this.config.camera.distanceModes.NEAR);
+
+    // If we are currently beyond new far, pull in.
+    const current = this.spherical.radius;
+    if (current > this.farLimit) {
+      this.radiusOverride = this.farLimit;
+      this.distanceMode = "FAR";
+      this.save.update((s) => (s.camera.distanceMode = "FAR"));
+      this.save.save();
+      this.bus.emit("camera:distanceMode", "FAR");
+    }
   }
 
   public dispose(): void {
@@ -207,9 +244,11 @@ export class CameraSystem {
       id: e.pointerId,
       pos: new THREE.Vector2(e.clientX, e.clientY),
       prev: new THREE.Vector2(e.clientX, e.clientY),
+      type: e.pointerType,
     };
     this.pointers.set(e.pointerId, pr);
 
+    // Mouse orbit
     if (e.pointerType === "mouse") {
       if (!e.isPrimary || e.button !== 0) return;
       this.isDragging = true;
@@ -223,6 +262,7 @@ export class CameraSystem {
       this.domElement.setPointerCapture(e.pointerId);
     } catch {}
 
+    // Initialize pinch/pan state when second touch arrives
     if (this.pointers.size === 2) {
       const [a, b] = this.getTwoPointers();
       this.lastPinchDist = a.pos.distanceTo(b.pos);
@@ -230,17 +270,12 @@ export class CameraSystem {
         .copy(a.pos)
         .add(b.pos)
         .multiplyScalar(0.5);
-      this.radiusOverride = this.spherical.radius;
+      this.radiusOverride ??= this.spherical.radius;
     }
   };
 
   private onPointerMove = (e: PointerEvent): void => {
     if (!this.enabled) return;
-
-    // ✅ stop browser gesture interference when cancelable
-    if (e.pointerType === "touch" && e.cancelable) {
-      e.preventDefault();
-    }
 
     const pr = this.pointers.get(e.pointerId);
     if (!pr) return;
@@ -259,11 +294,12 @@ export class CameraSystem {
       this.lastPointer.copy(pr.pos);
 
       this.sphericalDelta.theta -= dx * this.mouseRotateSpeed;
-      this.sphericalDelta.phi   -= dy * this.mouseRotateSpeed;
+      this.sphericalDelta.phi -= dy * this.mouseRotateSpeed;
       this.idleMs = 0;
       return;
     }
 
+    // Touch only from here
     if (e.pointerType !== "touch") return;
 
     // One-finger orbit
@@ -272,29 +308,16 @@ export class CameraSystem {
       const dy = pr.pos.y - pr.prev.y;
 
       this.sphericalDelta.theta -= dx * this.touchRotateSpeed;
-      this.sphericalDelta.phi   -= dy * this.touchRotateSpeed;
+      this.sphericalDelta.phi -= dy * this.touchRotateSpeed;
       this.idleMs = 0;
       return;
     }
 
-    // Two-finger pan + pinch
+    // Two-finger pan + pinch (fluid)
     if (this.pointers.size === 2) {
       const [a, b] = this.getTwoPointers();
 
-      // ✅ Pinch FIRST (so zoom reads clearly)
-      const dist = a.pos.distanceTo(b.pos);
-      const dd = dist - this.lastPinchDist;
-      this.lastPinchDist = dist;
-
-      if (this.radiusOverride == null) {
-        this.radiusOverride = this.spherical.radius;
-      }
-      this.radiusOverride = Math.max(
-        0.5,
-        this.radiusOverride - dd * this.pinchZoomSpeed
-      );
-
-      // Pan by center movement (damped if pinch active)
+      // Center movement for pan
       const center = new THREE.Vector2()
         .copy(a.pos)
         .add(b.pos)
@@ -306,10 +329,23 @@ export class CameraSystem {
       );
       this.lastTwoFingerCenter.copy(center);
 
-      const pinchActive = Math.abs(dd) > this.pinchActiveThreshold;
-      if (pinchActive) dCenter.multiplyScalar(this.pinchPanDamping);
+      // Pinch distance delta for zoom
+      const dist = a.pos.distanceTo(b.pos);
+      const dd = dist - this.lastPinchDist;
+      this.lastPinchDist = dist;
 
-      this.applyPan(dCenter);
+      // Apply pan, damped if pinch is active
+      const panScale = Math.abs(dd) > this.pinchActiveThreshold
+        ? this.pinchPanDamping
+        : 1.0;
+      this.applyPan(dCenter.multiplyScalar(panScale));
+
+      // Continuous radius override
+      this.radiusOverride ??= this.spherical.radius;
+      this.radiusOverride = this.clampRadius(
+        this.radiusOverride - dd * this.pinchZoomSpeed
+      );
+
       this.idleMs = 0;
     }
   };
@@ -326,9 +362,10 @@ export class CameraSystem {
       this.domElement.releasePointerCapture(e.pointerId);
     } catch {}
 
+    // When all touches end, keep radius, only update mode label
     if (this.pointers.size === 0 && this.radiusOverride != null) {
-      this.snapRadiusToMode(this.radiusOverride);
-      this.radiusOverride = null;
+      this.updateDistanceModeFromRadius(this.radiusOverride);
+      // keep radiusOverride so the camera stays at exact zoom level
     }
   };
 
@@ -341,8 +378,7 @@ export class CameraSystem {
     }
 
     if (this.pointers.size === 0 && this.radiusOverride != null) {
-      this.snapRadiusToMode(this.radiusOverride);
-      this.radiusOverride = null;
+      this.updateDistanceModeFromRadius(this.radiusOverride);
     }
   };
 
@@ -352,8 +388,7 @@ export class CameraSystem {
     this.pointers.clear();
 
     if (this.radiusOverride != null) {
-      this.snapRadiusToMode(this.radiusOverride);
-      this.radiusOverride = null;
+      this.updateDistanceModeFromRadius(this.radiusOverride);
     }
   };
 
@@ -367,6 +402,7 @@ export class CameraSystem {
     if (!this.enabled) return;
     e.preventDefault();
 
+    // desktop-only discrete cycling
     const now = performance.now();
     const delta = Math.abs(e.deltaY);
     if (delta < this.wheelThreshold) return;
@@ -393,6 +429,8 @@ export class CameraSystem {
   }
 
   private applyPan(pixelDelta: THREE.Vector2): void {
+    if (pixelDelta.lengthSq() === 0) return;
+
     const upWorld = new THREE.Vector3(0, 1, 0);
     const forward = new THREE.Vector3();
     this.camera.getWorldDirection(forward);
@@ -421,7 +459,7 @@ export class CameraSystem {
     });
   }
 
-  private snapRadiusToMode(radius: number): void {
+  private updateDistanceModeFromRadius(radius: number): void {
     const modes: DistanceMode[] = ["AT", "NEAR", "FAR"];
     let best: DistanceMode = modes[0];
     let bestD = Infinity;
@@ -444,6 +482,16 @@ export class CameraSystem {
 
     this.bus.emit("camera:distanceMode", best);
   }
+
+  private clampRadius(r: number): number {
+    const minR = this.config.camera.distanceModes.AT;
+    const maxR = this.farLimit;
+    return THREE.MathUtils.clamp(r, minR, maxR);
+  }
+
+  // --------------------------------------------------------
+  // Persistence
+  // --------------------------------------------------------
 
   private persistCamera(): void {
     const p = this.camera.position;
