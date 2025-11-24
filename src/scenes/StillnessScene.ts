@@ -109,8 +109,8 @@ export class StillnessScene {
     geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
 
     const mat = new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 0.6,
+      color: 0xffffed,
+      size: 0.31,
       sizeAttenuation: true,
       transparent: true,
       opacity: 0.9,
