@@ -27,9 +27,9 @@ export function createDefaultConfig(): Config {
     },
     camera: {
       distanceModes: {
-        AT: 1,
-        NEAR: 8,
-        FAR: 50,
+        AT: 10,
+        NEAR: 31,
+        FAR: 79,
       },
       autoRotateDelayMs: 12000,
     },
