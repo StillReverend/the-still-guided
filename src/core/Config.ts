@@ -9,39 +9,46 @@ export interface Config {
     distanceModes: Record<DistanceMode, number>;
     autoRotateDelayMs: number;
   };
-
-  // Legacy/simple counts (kept so earlier phases don’t break)
   stars: {
     bandCount: number;
     nearCount: number;
     farCount: number;
   };
-
-  // Phase 5+ starfield tuning (new)
   starfield: {
-    // Counts (tunable)
     farCount: number;
     bandCount: number;
     nearCount: number;
 
-    // Radii / volumes
-    farRadius: number;      // outer shell radius for far sphere
-    nearRadius: number;     // max radius for near volume
+    farRadius: number;
+    nearRadius: number;
 
-    // Band = thick disk / annulus
     bandInnerRadius: number;
     bandOuterRadius: number;
     bandThickness: number;
 
-    // Occlusion zone (no stars close to core)
     occlusionRadius: number;
 
-    // Motion / polish tuning
     driftSpeedFar: number;
     driftSpeedBand: number;
     driftSpeedNear: number;
     flickerSpeed: number;
     flickerAmount: number;
+  };
+
+  // Core (black hole) tuning
+  core: {
+    baseRadius: number;      // black hole sphere radius
+    minRadius: number;       // reserved for future if we tweak geom
+
+    ringInnerRadius: number;
+    ringOuterRadius: number;
+    auraRadius: number;
+
+    rotationSpeed: number;   // rad/sec
+    tiltX: number;
+    tiltZ: number;
+
+    minScale: number;        // lowest scale when shrinkLevel = 12
   };
 
   debug: {
@@ -55,21 +62,18 @@ export function createDefaultConfig(): Config {
       bgColor: 0x000000,
       pixelRatioMax: 2,
     },
-
     camera: {
       distanceModes: {
         AT: 10,
-        NEAR: 31,
-        FAR: 79,
+        NEAR: 50,
+        FAR: 300,
       },
       autoRotateDelayMs: 12000,
     },
-
-    // Phase 5 starfield defaults
     starfield: {
-      farCount: 666,
-      bandCount: 1994,
-      nearCount: 420,
+      farCount: 777,
+      bandCount: 3000,
+      nearCount: 1000,
 
       farRadius: 900,
       nearRadius: 220,
@@ -80,12 +84,27 @@ export function createDefaultConfig(): Config {
 
       occlusionRadius: 60,
 
-      // signature-friendly tuning (safe to tweak later)
       driftSpeedFar: 0.0031,
       driftSpeedBand: 0.0010,
       driftSpeedNear: 0.0031,
       flickerSpeed: 0.079,
       flickerAmount: 0.10,
+    },
+
+    // Core defaults (with your 10 / 31 / 79 signature sprinkled in)
+    core: {
+      baseRadius: 31,
+      minRadius: 10,
+
+      ringInnerRadius: 35,
+      ringOuterRadius: 79,
+      auraRadius: 90,
+
+      rotationSpeed: 0.031,  // rad/sec
+      tiltX: 0.31,
+      tiltZ: 0.10,
+
+      minScale: 0.31,
     },
 
     debug: {

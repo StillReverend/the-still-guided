@@ -184,7 +184,7 @@ export class StarfieldSystem {
       points,
       geometry,
       material,
-      baseOpacity: 0.75,
+      baseOpacity: 0.9,
       phase: Math.random() * Math.PI * 2,
     };
   }
@@ -208,7 +208,7 @@ export class StarfieldSystem {
 
     const material = new THREE.PointsMaterial({
       color: 0xffffed,
-      size: 0.40,
+      size: 0.50,
       sizeAttenuation: true,
       transparent: true,
       opacity: 0.9,
@@ -252,7 +252,7 @@ export class StarfieldSystem {
 
     const material = new THREE.PointsMaterial({
       color: 0xffffed,
-      size: 0.50,
+      size: 0.79,
       sizeAttenuation: true,
       transparent: true,
       opacity: 0.9,

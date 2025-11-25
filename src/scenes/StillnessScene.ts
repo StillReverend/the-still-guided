@@ -5,6 +5,7 @@ import type { Time } from "../core/Time";
 import type { SaveManager } from "../core/SaveManager";
 import { CameraSystem } from "../systems/CameraSystem";
 import { StarfieldSystem } from "../systems/StarfieldSystem";
+import { CoreSystem } from "../systems/CoreSystem";
 
 export interface StillnessSceneDeps {
   renderer: THREE.WebGLRenderer;
@@ -25,6 +26,7 @@ export class StillnessScene {
 
   private cameraSystem: CameraSystem | null = null;
   private starfield: StarfieldSystem | null = null;
+  private coreSystem: CoreSystem | null = null;
 
   constructor({ renderer, bus, config, save }: StillnessSceneDeps) {
     this.renderer = renderer;
@@ -49,12 +51,26 @@ export class StillnessScene {
   }
 
   public init(): void {
-
-    // Simple ambient light placeholder
+    // Ambient light placeholder
     const light = new THREE.AmbientLight(0xffffff, 0.5);
     this.scene.add(light);
 
-    // Camera system mounts here
+    // Core (black hole) system
+    this.coreSystem = new CoreSystem({
+      scene: this.scene,
+      config: this.config,
+    });
+    this.coreSystem.init();
+
+    // Starfield system
+    this.starfield = new StarfieldSystem({
+      scene: this.scene,
+      camera: this.camera,
+      config: this.config,
+    });
+    this.starfield.init();
+
+    // Camera system
     this.cameraSystem = new CameraSystem({
       camera: this.camera,
       domElement: this.renderer.domElement,
@@ -65,18 +81,11 @@ export class StillnessScene {
     this.cameraSystem.init();
 
     this.bus.emit("scene:ready", { id: "stillness" });
-
-    this.starfield = new StarfieldSystem({
-      scene: this.scene,
-      camera: this.camera,
-      config: this.config,
-    });
-    this.starfield.init();
-
   }
 
   public update(dt: number): void {
     this.cameraSystem?.update(dt);
+    this.coreSystem?.update(dt);
     this.starfield?.update(dt);
   }
 
@@ -89,6 +98,10 @@ export class StillnessScene {
   public dispose(): void {
     this.cameraSystem?.dispose();
     this.cameraSystem = null;
+
+    this.coreSystem?.dispose();
+    this.coreSystem = null;
+
     this.starfield?.dispose();
     this.starfield = null;
 
