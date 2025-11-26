@@ -4,8 +4,9 @@
 // Responsibilities:
 //  - Create and manage the central "core" of THE STILL
 //    * Black hole sphere
-//    * Accretion ring
+//    * Legacy accretion ring disk
 //    * Aura/glow shell
+//  - Host the ClockWorks (H/M/S rings) around the core
 //  - Slow rotation for constant motion
 //  - API: setShrinkLevel(0..12)
 //    * Drives visual scale to reflect constellation progress
@@ -14,27 +15,33 @@
 
 import * as THREE from "three";
 import type { Config } from "../core/Config";
+import { ClockWorks } from "../core/ClockWorks";
 
 export interface CoreSystemDeps {
   scene: THREE.Scene;
   config: Config;
+  camera: THREE.Camera; // kept for future use if needed
 }
 
 export class CoreSystem {
   private readonly scene: THREE.Scene;
   private readonly config: Config;
+  private readonly camera: THREE.Camera;
 
   private group: THREE.Group | null = null;
   private coreMesh: THREE.Mesh | null = null;
   private ringMesh: THREE.Mesh | null = null;
   private auraMesh: THREE.Mesh | null = null;
 
+  private clockWorks: ClockWorks | null = null;
+
   private shrinkLevel = 0; // 0..12
   private readonly maxLevel = 12;
 
-  constructor({ scene, config }: CoreSystemDeps) {
+  constructor({ scene, config, camera }: CoreSystemDeps) {
     this.scene = scene;
     this.config = config;
+    this.camera = camera;
   }
 
   // ----------------------------------------------------------
@@ -59,16 +66,17 @@ export class CoreSystem {
 
     const coreMat = new THREE.MeshStandardMaterial({
       color: 0x000000,
-      emissive: 0x101018,
+      emissive: 0x000000,
       metalness: 1.0,
       roughness: 0.31,
+      wireframe: false,
     });
 
     this.coreMesh = new THREE.Mesh(coreGeom, coreMat);
     this.coreMesh.name = "CoreSphere";
 
     // ------------------------
-    // Accretion ring (disk)
+    // Accretion ring (legacy disk)
     // ------------------------
     const ringGeom = new THREE.RingGeometry(
       c.ringInnerRadius,
@@ -80,7 +88,7 @@ export class CoreSystem {
       color: 0xfeffed,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.31,
+      opacity: 0,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
@@ -114,13 +122,43 @@ export class CoreSystem {
 
     // Apply initial shrink level
     this.applyShrinkLevel();
+
+    // --------------------------------------------------------
+    // ClockWorks (H/M/S rings) — always present around the core
+    // --------------------------------------------------------
+    // Use c.baseRadius as the coreRadius so the clock cluster "hugs" the black hole.
+    // ClockWorks creates its own group at the origin; we then parent it to the core
+    // so it shares the same tilt + rotation.
+    this.clockWorks = new ClockWorks(this.scene, {
+      coreRadius: c.baseRadius,
+      baseGap: 3.0,
+      hourRingThickness: 4.0,
+      minuteRingThickness: 2.0,
+      secondRingThickness: 1.0,
+      gapHM: 1.5,
+      gapMS: 3.0,
+      ringSegments: 128,
+      // Colors + opacities fall back to ClockWorks defaults unless overridden here
+    });
+
+    if (this.group && this.clockWorks.group) {
+      this.group.add(this.clockWorks.group);
+    }
   }
 
   public dispose(): void {
-    if (!this.group) return;
+    // Remove core group
+    if (this.group) {
+      this.scene.remove(this.group);
+    }
 
-    this.scene.remove(this.group);
+    // Dispose ClockWorks
+    if (this.clockWorks) {
+      this.clockWorks.dispose(this.scene);
+      this.clockWorks = null;
+    }
 
+    // Dispose geometries/materials
     if (this.coreMesh) {
       this.coreMesh.geometry.dispose();
       (this.coreMesh.material as THREE.Material).dispose();
@@ -152,6 +190,11 @@ export class CoreSystem {
 
     // Simple slow rotation around Y (plus any static tilt)
     this.group.rotation.y += c.rotationSpeed * dt;
+
+    // Update clock rings (time-based fill)
+    if (this.clockWorks) {
+      this.clockWorks.update(dt);
+    }
   }
 
   // ----------------------------------------------------------
@@ -185,7 +228,6 @@ export class CoreSystem {
     if (this.auraMesh) {
       const mat = this.auraMesh.material as THREE.MeshBasicMaterial;
       const base = 0.31;
-      // As the hole "shrinks", the aura can intensify slightly
       mat.opacity = THREE.MathUtils.clamp(base + t * 0.31, 0.05, 0.9);
     }
   }
