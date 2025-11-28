@@ -64,11 +64,11 @@ export function createDefaultConfig(): Config {
     },
     camera: {
       distanceModes: {
-        AT: 10,
-        NEAR: 50,
+        AT: 100,
+        NEAR: 200,
         FAR: 300,
       },
-      autoRotateDelayMs: 12000,
+      autoRotateDelayMs: 120000,
     },
     starfield: {
       farCount: 777,

@@ -49,6 +49,10 @@ export class SceneManager {
     this.transition.init(this.renderer);
   }
 
+  public getActiveCamera(): THREE.PerspectiveCamera | null {
+    return this.activeScene ? this.activeScene.camera : null;
+  }
+
   public init(): void {
     this.activeScene = this.createScene("stillness");
     this.activeSceneId = "stillness";

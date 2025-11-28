@@ -5,6 +5,7 @@ import { createDefaultConfig } from "../core/Config";
 import type { Config } from "../core/Config";
 import { Time } from "../core/Time";
 import { SaveManager } from "../core/SaveManager";
+import { DebugTools } from "../dev/DebugTools";
 
 export class Entry {
   public readonly renderer: THREE.WebGLRenderer;
@@ -17,6 +18,9 @@ export class Entry {
   private rafId: number | null = null;
   private isRunning = false;
 
+  // Dev HUD (FPS + camera pos) – only used in dev
+  private debugTools: DebugTools | null = null;
+
   constructor(canvas?: HTMLCanvasElement) {
     // Canvas
     const targetCanvas = canvas ?? this.ensureCanvas();
@@ -28,6 +32,7 @@ export class Entry {
       alpha: true,
       powerPreference: "high-performance",
     });
+      // *= 0.75; // Visual change during DEV only
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -55,13 +60,32 @@ export class Entry {
   public start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
+
+    // Initialize scenes
     this.sceneManager.init();
+
     // Dev hotkeys for testing transitions
     window.addEventListener("keydown", (e) => {
       if (e.key === "1") this.sceneManager.transitionTo("stillness");
       if (e.key === "2") this.sceneManager.transitionTo("test01");
       if (e.key === "3") this.sceneManager.transitionTo("constellation_test");
-      });
+    });
+
+    // Dev-only HUD (FPS + camera position)
+    if (import.meta.env.DEV) {
+      const cam = this.sceneManager.getActiveCamera
+        ? this.sceneManager.getActiveCamera()
+        : null;
+
+      if (cam) {
+        this.debugTools = new DebugTools(cam, this.renderer.domElement);
+      } else {
+        console.warn(
+          "[DebugTools] No active camera found after sceneManager.init()."
+        );
+      }
+    }
+
     this.loop();
   }
 
@@ -70,7 +94,15 @@ export class Entry {
     this.isRunning = false;
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     this.rafId = null;
+
     window.removeEventListener("resize", this.handleResize);
+
+    // Tear down dev HUD if present
+    if (this.debugTools) {
+      this.debugTools.dispose();
+      this.debugTools = null;
+    }
+
     this.sceneManager.dispose();
     this.renderer.dispose();
   }
@@ -81,6 +113,10 @@ export class Entry {
 
     const dt = this.time.tick();
     this.sceneManager.update(dt);
+
+    if (this.debugTools) {
+      this.debugTools.update();
+    }
   };
 
   private handleResize = (): void => {
