@@ -7,7 +7,11 @@ export interface Config {
   };
   camera: {
     distanceModes: Record<DistanceMode, number>;
-    autoRotateDelayMs: number;
+    autoRotateDelayMs: number;// New: canonical poses
+    startPosition: { x: number; y: number; z: number };
+    startTarget: { x: number; y: number; z: number };
+    clockFacePosition: { x: number; y: number; z: number };
+    clockFaceTarget: { x: number; y: number; z: number };
   };
   stars: {
     bandCount: number;
@@ -69,6 +73,17 @@ export function createDefaultConfig(): Config {
         FAR: 300,
       },
       autoRotateDelayMs: 120000,
+      // New: canonical poses
+
+      // Where you eventually want to start the experience.
+      // For now, let's keep your original Z-based start:
+      startPosition: { x: 0, y: 0, z: 200 },
+      startTarget:   { x: 0, y: 0, z: 0 },
+
+      // Where the clock reads CLEAN and “front-facing”.
+      // This is your canonical Clock Face / Mosaic axis.
+      clockFacePosition: { x: 0, y: -200, z: 0 },
+      clockFaceTarget:   { x: 0, y: 0, z: 0 },
     },
     starfield: {
       farCount: 777,
